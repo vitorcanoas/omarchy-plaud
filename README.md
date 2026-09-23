@@ -86,6 +86,14 @@ already provides access to the app. Preserve the system microphone indicator.
 
 Shortcuts require `--hypr-shortcuts` and a running client.
 
+## Preferences
+
+Open the gear on the standby card or **Preferências** from the tray. Escape or
+its close button closes only preferences. Microphone discovery runs in the
+background; use **Atualizar microfones** after reconnecting a device or a discovery
+failure. A missing saved microphone is shown as unavailable, without silently
+choosing another input. Preferences apply to the next recording.
+
 ## Data and limits
 
 Recordings, notes, account state and logs live under
@@ -115,7 +123,7 @@ With an awake graphical session:
 dbus-run-session -- python3 tests/run.py
 ```
 
-The private review test runner expects **459 checks across 42 files**. Tests
+The private review test runner expects **477 checks across 44 files**. Tests
 use isolated data and block network calls. They do not prove a real account
 upload, current service compatibility or physical pointer behavior. See
 [tests/README.md](tests/README.md) for the test conditions.

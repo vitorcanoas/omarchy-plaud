@@ -315,8 +315,8 @@ check("15 exit 4 (closed without a request), no file id, or the browser fallback
 # The path after that hop is exactly the automatic one: _generation_requested
 # polls wait_for_generation(file_id, {"status": 0}) on a worker and, on
 # status 1, reaches _generation_complete on the GTK thread (the "Sua nota
-# está pronta" / "Ver as notas" notice); a failure is reported as
-# "Áudio enviado. …" and nothing else.
+# está pronta" / "Ver as notas" notice); a failure is reported with a
+# bounded stage code and Plaud Web guidance, never the raw exception.
 from gi.repository import Gtk
 class PollClient:
     def __init__(self, result=None, error=None):
@@ -346,7 +346,11 @@ try:
     bad = PollClient(error=TimeoutError("O Plaud ainda está processando."))
     main_mod._custom_generation_requested(bad, "file_ABC")
     drain()
-    ok16b = completed == ["file_ABC"] and said == ["Áudio enviado. O Plaud ainda está processando."]
+    ok16b = (completed == ["file_ABC"] and len(said) == 1
+             and said[0].startswith("PL-ACOMPANHAMENTO:")
+             and "O Plaud ainda está processando" not in said[0]
+             and "Consulte o Plaud Web" in said[0]
+             and len(said[0]) <= 240)
     main_mod._custom_generation_requested(PollClient(result={"status": 1}), None)
     main_mod._custom_generation_requested(None, "file_ABC")
     drain()

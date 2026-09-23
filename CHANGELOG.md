@@ -36,9 +36,16 @@ under validation. No public release is implied.
   logs follow `PLAUD_LINUX_HOME` and unsafe log destinations are skipped.
   Bounded cleanup touches eligible derived logs and screenshots, preserving
   recorded audio.
-- The isolated regression runner now expects 459 checks across 42 files.
+- The isolated regression runner now expects 477 checks across 44 files.
 
 ### Fixed
+
+- Preserve a visible recording state and recoverable segments when stopping fails;
+  refuse requested system capture when no monitor is available instead of falling
+  back to the default input. Keep arbitrary server response text out of user errors.
+- Preferences now provide a visible close action, Escape, clearer navigation and
+  scrollable pages. Microphone discovery runs in the background with a timeout and
+  refresh action; disconnected saved microphones remain explicitly selected.
 
 - Recorded audio remains available after annotation, upload or generation
   failures. Duplicate stop paths cannot attach the same session twice.

@@ -25,12 +25,14 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, GLib, Gio  # noqa: E402
 
 try:
+    from . import audio  # noqa: E402
     from . import generation_web  # noqa: E402
     from . import library  # noqa: E402
     from . import login as login_mod  # noqa: E402
     from . import paths  # noqa: E402
     from . import plaud_api  # noqa: E402
 except ImportError:
+    import audio  # noqa: E402
     import generation_web  # noqa: E402
     import library  # noqa: E402
     import login as login_mod  # noqa: E402
@@ -81,6 +83,27 @@ def _bus_notify(title, body, replaces_id):
 def notify(title, body):
     """A notification the user must see on its own. Never replaces anything."""
     _bus_notify(title, body, 0)
+
+
+_SAFE_FAILURES = {
+    "start": "PL-INICIO: Não foi possível iniciar o envio. Áudio mantido em Gravações.",
+    "upload": "PL-ENVIO: Falha no envio. Áudio mantido em Gravações; tente Gravações locais / reenviar.",
+    "resend": "PL-REENVIO: Falha ao reenviar. Áudio mantido em Gravações; tente novamente.",
+    "marks": "PL-DESTAQUES: Áudio enviado, mas os destaques não foram anexados. Tente pelo Plaud Web.",
+    "generation": "PL-GERACAO: Áudio enviado, mas a geração falhou. Tente pelo Plaud Web.",
+    "custom": "PL-WEB: Áudio enviado, mas não foi possível abrir a geração. Tente pelo Plaud Web.",
+    "monitor": "PL-ACOMPANHAMENTO: Áudio enviado, mas não foi possível confirmar a nota. Consulte o Plaud Web.",
+}
+
+
+def _safe_failure(stage):
+    """Fixed caller-side diagnostics; never stringify a cloud exception.
+
+    plaud_api may attach a server response excerpt to an exception. A stable
+    stage code retains useful support context without exposing that response
+    through a notification or recording sidecar.
+    """
+    return _SAFE_FAILURES[stage]
 
 
 # The id of the live progress notification, 0 when none is on screen. One
@@ -352,8 +375,8 @@ def _custom_generation_requested(client, file_id):
     def start():
         try:
             _generation_requested(client, file_id, {"status": 0})
-        except Exception as exc:
-            notify("Plaud Linux", f"Áudio enviado. {exc}")
+        except Exception:
+            notify("Plaud Linux", _safe_failure("monitor"))
         return False
 
     GLib.idle_add(start)
@@ -370,8 +393,8 @@ def _generation_requested(client, file_id, result):
         try:
             client.wait_for_generation(file_id, result)
             GLib.idle_add(_generation_complete, file_id)
-        except Exception as exc:
-            notify("Plaud Linux", f"Áudio enviado. {exc}")
+        except Exception:
+            notify("Plaud Linux", _safe_failure("monitor"))
 
     threading.Thread(target=monitor, daemon=True).start()
 
@@ -527,6 +550,9 @@ def on_stop(rec, done):
             ended.append(True)
 
     try:
+        if getattr(rec, "finalize_failed", False):
+            _do_upload(rec, end_session)
+            return
         try:
             from . import settings
         except ImportError:
@@ -536,7 +562,7 @@ def on_stop(rec, done):
             notify("Plaud Linux", "Gravação salva neste computador. Envie quando quiser em Envios recentes.")
             return
         _do_upload(rec, end_session)
-    except BaseException as e:
+    except BaseException:
         # BaseException, not Exception: KeyboardInterrupt is the case this
         # handler was written for -- the app spawns ffmpeg and the user may
         # Ctrl-C the launcher -- and it is not an Exception, so the narrower
@@ -544,19 +570,28 @@ def on_stop(rec, done):
         #
         # End the session FIRST. Notifying first made the whole guarantee
         # contingent on the noisiest part of the path: _bus_notify itself
-        # catches only Exception, and the f-string calls str(e), which an
-        # exception with a hostile __str__ raises from. Either one skipped
+        # catches only Exception. A message built from the exception could
+        # also expose a server response or raise during str(). Either skipped
         # end_session() and hung the loop windowless -- reopening exactly the
         # bug this function exists to close. Ending the session does not depend
         # on the message being delivered, so it must not be sequenced behind it.
         end_session()
         # Then say something: the recording is on disk and the user is owed its
         # location, not silence.
-        notify("Plaud Linux", f"❌ Falha ao iniciar o envio: {e}\nArquivo mantido em Gravações.")
+        notify("Plaud Linux", _safe_failure("start"))
 
 
 def _do_upload(rec, done):
     path = rec.final_path
+    if getattr(rec, "finalize_failed", False):
+        # The capture process has exited, but merge or metadata persistence
+        # failed. A stale/partial final_path may exist, so never offer it to
+        # the cloud as this session's verified output.
+        done()
+        notify("Plaud Linux",
+               "Falha ao finalizar a gravação. Áudio mantido neste computador; "
+               "confira Envios recentes.")
+        return
     if getattr(rec, "concat_failed", False):
         # The audio still exists as segments — say so, and say where. Mention a
         # segment loss here too: _concat() can set both, and this early return
@@ -667,8 +702,8 @@ def _do_upload(rec, done):
                         fid, rec.screenshots, notes=rec.notes, flags=rec_flags,
                         progress=lambda m: progress("Sincronizando destaques…"),
                     )
-                except Exception as exc:
-                    notify("Plaud Linux", f"Áudio enviado, mas os destaques não foram anexados: {exc}")
+                except Exception:
+                    notify("Plaud Linux", _safe_failure("marks"))
 
             # Ask on the GTK thread, wait here. Everything after this point --
             # the notification, the screenshot attachment, the `done` in the
@@ -695,22 +730,18 @@ def _do_upload(rec, done):
                     _open_generation(url, client, fid)
                     notify("Plaud Linux",
                            "✅ Enviado! Abrindo as opções de geração.")
-                except Exception as e:
-                    notify("Plaud Linux",
-                           f"✅ Enviado, mas não consegui abrir o Plaud Web: {e}\n"
-                           "A gravação está em web.plaud.ai — gere por lá.")
+                except Exception:
+                    notify("Plaud Linux", _safe_failure("custom"))
             elif choice == "auto":
                 try:
                     result = client.generate(fid, progress=lambda m: progress(f"Gerando: {m}"))
                     _generation_requested(client, fid, result)
                     notify("Plaud Linux", "✅ Enviado! Gerando nota.\nVeja em web.plaud.ai")
-                except Exception as e:
+                except Exception:
                     # The audio is on the server; only the summary failed. Say
                     # so precisely rather than letting the outer handler claim
                     # "falha no upload" for a recording that uploaded fine.
-                    notify("Plaud Linux",
-                           f"✅ Enviado, mas a geração falhou: {e}\n"
-                           "A gravação está em web.plaud.ai — gere por lá.")
+                    notify("Plaud Linux", _safe_failure("generation"))
             else:
                 # Dismissed. The recording is safe and transcribing already
                 # (PLAUD_API_NOTES §Upload step 5: confirm_upload starts the
@@ -720,9 +751,10 @@ def _do_upload(rec, done):
                        "✅ Enviado! Nenhuma geração escolhida.\n"
                        "A gravação está em web.plaud.ai.")
 
-        except Exception as e:
-            _record_outcome(rec, ok=False, error=str(e))
-            notify("Plaud Linux", f"❌ Falha no upload: {e}\nArquivo mantido em Gravações.")
+        except Exception:
+            error = _safe_failure("upload")
+            _record_outcome(rec, ok=False, error=error)
+            notify("Plaud Linux", error)
         finally:
             # Still idle_add: this runs on the worker thread, and the only legal
             # way back to GTK is through the main loop. Only the payload changed
@@ -817,19 +849,15 @@ def resend(entry, done=None):
                         plaud_api.encrypt_uuid(client.device))
                     _open_generation(url, client, fid)
                     notify("Plaud Linux", "✅ Reenviado! Abrindo as opções de geração.")
-                except Exception as e:
-                    notify("Plaud Linux",
-                           f"✅ Reenviado, mas não consegui abrir o Plaud Web: {e}\n"
-                           "A gravação está em web.plaud.ai — gere por lá.")
+                except Exception:
+                    notify("Plaud Linux", _safe_failure("custom"))
             elif choice == "auto":
                 try:
                     result = client.generate(fid, progress=lambda m: progress(f"Gerando: {m}"))
                     _generation_requested(client, fid, result)
                     notify("Plaud Linux", "✅ Reenviado! Gerando nota.\nVeja em web.plaud.ai")
-                except Exception as e:
-                    notify("Plaud Linux",
-                           f"✅ Reenviado, mas a geração falhou: {e}\n"
-                           "A gravação está em web.plaud.ai — gere por lá.")
+                except Exception:
+                    notify("Plaud Linux", _safe_failure("generation"))
             else:
                 notify("Plaud Linux",
                        "✅ Reenviado! Nenhuma geração escolhida.\n"
@@ -843,15 +871,14 @@ def resend(entry, done=None):
                         fid, entry.screenshots, notes=entry.notes, flags=entry.flags,
                         progress=lambda m: progress("Sincronizando destaques…"),
                     )
-                except Exception as e:
-                    notify("Plaud Linux",
-                           f"✅ Reenviado, mas os destaques não foram anexados: {e}")
-        except Exception as e:
+                except Exception:
+                    notify("Plaud Linux", _safe_failure("marks"))
+        except Exception:
             # The .opus is untouched -- only the .json is written -- so the
             # recording is exactly as resendable after this as it was before.
-            entry.mark_failed(e)
-            notify("Plaud Linux",
-                   f"❌ Falha ao reenviar: {e}\nArquivo mantido em Gravações.")
+            error = _safe_failure("resend")
+            entry.mark_failed(error)
+            notify("Plaud Linux", error)
         finally:
             finish()
 
@@ -976,9 +1003,15 @@ def start_session(app=None, on_session_end=None, on_state_change=None):
     # no loop of its own passes Gtk.main_quit and still exits when the upload
     # finishes. on_stop() is untouched either way.
     done = on_session_end if on_session_end is not None else Gtk.main_quit
-    ov = overlay_mod.run(mode=mode, on_stop=lambda rec: (_desktop_stopped or on_stop)(rec, done),
-                         on_state_change=on_state_change,
-                         on_discard=lambda rec: on_discard(rec, done))
+    try:
+        ov = overlay_mod.run(mode=mode, on_stop=lambda rec: (_desktop_stopped or on_stop)(rec, done),
+                             on_state_change=on_state_change,
+                             on_discard=lambda rec: on_discard(rec, done))
+    except audio.MissingSystemMonitor:
+        notify("Plaud Linux",
+               "Áudio do sistema indisponível — nenhum monitor de saída encontrado. "
+               "Confira a saída de som e tente novamente.")
+        return False
     # The mic can be asked for and not be there: with no default source,
     # _ffmpeg_cmd() drops to the system-only branch and records on, so a user
     # who chose "Microfone" gets a recording with none of their own voice. The

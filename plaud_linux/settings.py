@@ -6,6 +6,7 @@ without capture; data placement is selected through PLAUD_LINUX_HOME at startup.
 """
 import os
 import subprocess
+import threading
 
 import gi
 
@@ -72,12 +73,28 @@ window.plaud-settings, .plaud-settings { background: #fff; color: #111; font-siz
   padding: 8px 12px;
 }
 .plaud-settings button.plaud-settings-tab:checked { background-color: #e5e5e5; }
-.plaud-settings-section-title { font-weight: 600; }
+.plaud-settings-section-title { font-size: 18px; font-weight: 400; }
+.plaud-settings button.plaud-settings-tab, .plaud-settings button.plaud-settings-tab label { font-weight: 400; }
+.plaud-settings headerbar { background: #f5f5f5; box-shadow: none; min-height: 30px; }
+.plaud-settings .plaud-settings-title { font-size: 13px; font-weight: 400; }
 .plaud-settings .plaud-settings-hint { color: #7a7a7a; }
 .plaud-settings-sep { background: #ebebeb; min-height: 1px; }
 """
 
 _css_screens = set()
+
+
+def _discover_microphones():
+    """Read-only discovery for preferences; never hold up the GTK thread."""
+    result = subprocess.run(
+        ["pactl", "list", "sources", "short"], capture_output=True, text=True,
+        timeout=3, check=True, env=dict(os.environ, LC_ALL="C", LANGUAGE="C"))
+    sources = []
+    for line in result.stdout.splitlines():
+        fields = line.split("\t")
+        if len(fields) >= 2 and not fields[1].endswith(".monitor"):
+            sources.append(fields[1])
+    return sources
 
 
 def _load():
@@ -163,7 +180,15 @@ def _find_launcher():
 class SettingsWindow(Gtk.Window):
     def __init__(self):
         super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        self._closed = False
+        self._mic_loading = False
         self.set_title("Preferências")
+        header = Gtk.HeaderBar(title="Preferências")
+        header.set_show_close_button(True)
+        header.set_decoration_layout(":close")
+        self.set_titlebar(header)
+        self.connect("key-press-event", self._on_key_press)
+        self.connect("destroy", self._on_window_destroy)
         self.set_icon_name("plaud-linux")
         self.get_style_context().add_class("plaud-settings")
         self.set_default_size(WINDOW_WIDTH, WINDOW_HEIGHT)
@@ -176,6 +201,16 @@ class SettingsWindow(Gtk.Window):
 
         self._apply_css()
         self._build_ui()
+        self._refresh_microphones()
+
+    def _on_key_press(self, _window, event):
+        if event.keyval == Gdk.KEY_Escape:
+            self.destroy()
+            return True
+        return False
+
+    def _on_window_destroy(self, *_):
+        self._closed = True
 
     def _on_map(self, *_):
         GLib.timeout_add(150, self._float)
@@ -185,6 +220,8 @@ class SettingsWindow(Gtk.Window):
         """Ask Hyprland to float this window at its own size. See panel.py._float
         for why this runs on a timer rather than from map-event directly, and
         why it is `hyprctl repl` rather than a dispatch string."""
+        if self._closed:
+            return False
         sel = f'window="class:^({WMCLASS})$"'
         lua = (f'hl.dispatch(hl.dsp.window.float({{action="enable", {sel}}}))\n'
                f'hl.dispatch(hl.dsp.window.resize('
@@ -221,8 +258,8 @@ class SettingsWindow(Gtk.Window):
 
         general_page = self._build_general()
         recording_page = self._build_recording()
-        self.stack.add_named(general_page, "general")
-        self.stack.add_named(recording_page, "recording")
+        self._add_page(general_page, "general")
+        self._add_page(recording_page, "recording")
 
         pages = [("Geral", "general"), ("Gravação", "recording")]
         for title, name, page in (
@@ -230,17 +267,32 @@ class SettingsWindow(Gtk.Window):
                 ("Notificações", "notifications", self._build_notifications()),
                 ("Sincronização em nuvem", "cloud", self._build_cloud()),
                 ("Sobre", "about", self._build_about())):
-            self.stack.add_named(page, name)
+            self._add_page(page, name)
             pages.append((title, name))
+        icons = {"general": "preferences-system-symbolic",
+                 "recording": "audio-input-microphone-symbolic",
+                 "shortcuts": "input-keyboard-symbolic",
+                 "notifications": "preferences-system-notifications-symbolic",
+                 "cloud": "folder-remote-symbolic", "about": "help-about-symbolic"}
         group = None
         for title, name in pages:
             btn = Gtk.RadioButton.new_with_label_from_widget(group, title)
             if group is None:
                 group = btn
             btn.set_mode(False)
-            btn.get_child().set_xalign(0)
-            btn.get_child().set_line_wrap(True)
-            btn.get_child().set_max_width_chars(20)
+            label = btn.get_child()
+            btn.remove(label)
+            attrs = Pango.AttrList()
+            attrs.insert(Pango.attr_weight_new(Pango.Weight.NORMAL))
+            label.set_attributes(attrs)
+            label.set_xalign(0)
+            label.set_line_wrap(True)
+            label.set_max_width_chars(18)
+            row = Gtk.Box(spacing=10)
+            row.pack_start(Gtk.Image.new_from_icon_name(icons[name], Gtk.IconSize.MENU), False, False, 0)
+            row.pack_start(label, True, True, 0)
+            btn.add(row)
+            btn.get_accessible().set_name(title)
             btn.get_style_context().add_class("plaud-settings-tab")
             btn.connect("toggled", self._on_tab_toggled, name)
             sidebar.pack_start(btn, False, False, 0)
@@ -252,6 +304,13 @@ class SettingsWindow(Gtk.Window):
         root.pack_start(sidebar, False, False, 0)
         root.pack_start(content, True, True, 0)
         root.show_all()
+
+    def _add_page(self, page, name):
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_min_content_width(420)
+        scroll.add(page)
+        self.stack.add_named(scroll, name)
 
     def _on_tab_toggled(self, btn, name):
         if btn.get_active():
@@ -296,8 +355,8 @@ class SettingsWindow(Gtk.Window):
         lang_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         lang_col.pack_start(Gtk.Label(label="Idioma enviado ao Plaud", xalign=0), False, False, 0)
         hint = Gtk.Label(
-            label="Só o cabeçalho de idioma das chamadas deste app à API. Não muda "
-                  "a interface nem o idioma do áudio no seletor da Plaud Web.", xalign=0)
+            label="Preferência de idioma enviada ao serviço Plaud. "
+                  "A interface permanece em português.", xalign=0)
         hint.get_style_context().add_class("plaud-settings-hint")
         hint.set_line_wrap(True)
         # set_line_wrap alone does not cap the label's natural (unwrapped)
@@ -306,8 +365,7 @@ class SettingsWindow(Gtk.Window):
         # SettingsWindow well past its 720px official width (measured: 1352
         # wide, and hyprctl resize back to 720 was silently refused because
         # GTK's own size negotiation won).
-        hint.set_max_width_chars(48)
-        lang_col.pack_start(hint, False, False, 0)
+        hint.set_max_width_chars(32)
         lang_row.pack_start(lang_col, True, True, 0)
 
         self.combo_lang = Gtk.ComboBoxText()
@@ -322,6 +380,7 @@ class SettingsWindow(Gtk.Window):
         self.combo_lang.connect("changed", self._on_language_changed)
         lang_row.pack_start(self.combo_lang, False, False, 0)
         box.pack_start(lang_row, False, False, 0)
+        box.pack_start(hint, False, False, 0)
 
         box.pack_start(Gtk.Box(), False, False, 6)  # spacer
 
@@ -342,16 +401,14 @@ class SettingsWindow(Gtk.Window):
         # the full path is still reachable by selecting the text or via
         # "Abrir pasta", so nothing is actually hidden.
         path_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
-        path_label.set_max_width_chars(56)
+        path_label.set_max_width_chars(32)
         folder_col.pack_start(path_label, False, False, 0)
         restart_hint = Gtk.Label(
-            label="Para mudar, defina PLAUD_LINUX_HOME e reinicie o Plaud "
-                  "Linux -- não pode ser alterado nesta janela.",
+            label="Suas gravações e anotações são preservadas neste computador.",
             xalign=0)
         restart_hint.get_style_context().add_class("plaud-settings-hint")
         restart_hint.set_line_wrap(True)
-        restart_hint.set_max_width_chars(56)  # see the language hint's own comment above
-        folder_col.pack_start(restart_hint, False, False, 0)
+        restart_hint.set_max_width_chars(32)  # see the language hint's own comment above
         folder_row.pack_start(folder_col, True, True, 0)
 
         btn_open = Gtk.Button(label="Abrir pasta")
@@ -359,6 +416,7 @@ class SettingsWindow(Gtk.Window):
         btn_open.connect("clicked", self._on_open_folder)
         folder_row.pack_start(btn_open, False, False, 0)
         box.pack_start(folder_row, False, False, 0)
+        box.pack_start(restart_hint, False, False, 0)
 
         return box
 
@@ -388,36 +446,27 @@ class SettingsWindow(Gtk.Window):
             cell.set_property("ellipsize", Pango.EllipsizeMode.END)
             cell.set_property("max-width-chars", 24)
             cell.set_property("width-chars", 24)
-        self.combo_mic.append(MIC_AUTOMATIC, "Automático")
-        self.combo_mic.append(MIC_OFF, "Desativado")
-        try:
-            sources = audio.list_sources()
-        except Exception:
-            sources = []
-        # .monitor sources are sinks-as-inputs (system audio loopback), not
-        # microphones -- listing them here would offer to "record from" a
-        # speaker output as if it were a mic, which is a different control
-        # (the System audio switch below already covers that signal).
-        for name in sources:
-            if not name.endswith(".monitor"):
-                self.combo_mic.append(name, name)
-
-        current_mic = get_mic_device()
-        ids = [MIC_AUTOMATIC, MIC_OFF] + [n for n in sources if not n.endswith(".monitor")]
-        self.combo_mic.set_active(ids.index(current_mic) if current_mic in ids else 0)
         self.combo_mic.set_valign(Gtk.Align.CENTER)
-        self.combo_mic.connect("changed", self._on_mic_changed)
+        self._mic_handler = self.combo_mic.connect("changed", self._on_mic_changed)
         mic_row.pack_start(self.combo_mic, False, False, 0)
         box.pack_start(mic_row, False, False, 0)
 
         mic_hint = Gtk.Label(
-            label="O Plaud seleciona automaticamente o melhor microfone "
-                  "para gravações claras e sem interrupções.",
+            label="Automático usa o microfone padrão do sistema.",
             xalign=0)
         mic_hint.get_style_context().add_class("plaud-settings-hint")
         mic_hint.set_line_wrap(True)
         mic_hint.set_max_width_chars(56)  # see the language hint's own comment in _build_general
         box.pack_start(mic_hint, False, False, 0)
+        self.mic_status = Gtk.Label(xalign=0)
+        self.mic_status.set_line_wrap(True)
+        self.mic_status.set_max_width_chars(48)
+        self.mic_status.get_style_context().add_class("plaud-settings-hint")
+        box.pack_start(self.mic_status, False, False, 0)
+        self.mic_retry = Gtk.Button(label="Atualizar microfones")
+        self.mic_retry.set_halign(Gtk.Align.START)
+        self.mic_retry.connect("clicked", lambda _: self._refresh_microphones())
+        box.pack_start(self.mic_retry, False, False, 0)
 
         # --- System audio: plain Switch, default on ------------------------
         sys_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -435,6 +484,65 @@ class SettingsWindow(Gtk.Window):
         box.pack_start(hint, False, False, 0)
 
         return box
+
+    def _refresh_microphones(self):
+        if self._closed or self._mic_loading:
+            return
+        self._mic_loading = True
+        self.combo_mic.set_sensitive(False)
+        self.mic_retry.set_sensitive(False)
+        self.mic_status.set_text("Buscando microfones…")
+
+        def discover():
+            try:
+                sources, failed = _discover_microphones(), False
+            except (OSError, subprocess.SubprocessError, UnicodeError):
+                sources, failed = [], True
+            GLib.idle_add(self._apply_microphones, sources, failed)
+
+        threading.Thread(target=discover, daemon=True).start()
+
+    def _apply_microphones(self, sources, failed):
+        if self._closed:
+            return False
+        self._mic_loading = False
+        self._mic_sources = sources
+        self._mic_failed = failed
+        current = get_mic_device()
+        self.combo_mic.handler_block(self._mic_handler)
+        try:
+            self.combo_mic.remove_all()
+            self.combo_mic.append(MIC_AUTOMATIC, "Automático")
+            self.combo_mic.append(MIC_OFF, "Desativado")
+            for name in sources:
+                self.combo_mic.append(name, name)
+            missing = current not in (MIC_AUTOMATIC, MIC_OFF) and current not in sources
+            if missing:
+                suffix = "não verificado" if failed else "indisponível"
+                self.combo_mic.append(current, f"{current} ({suffix})")
+            self.combo_mic.set_active_id(current)
+        finally:
+            self.combo_mic.handler_unblock(self._mic_handler)
+        self.combo_mic.set_tooltip_text(self.combo_mic.get_active_text())
+        self.combo_mic.set_sensitive(True)
+        self.mic_retry.set_sensitive(True)
+        self._update_mic_status()
+        return False
+
+    def _update_mic_status(self):
+        current = self.combo_mic.get_active_id()
+        sources = self._mic_sources
+        missing = current not in (MIC_AUTOMATIC, MIC_OFF) and current not in sources
+        if self._mic_failed:
+            message = "Não foi possível listar os microfones. Tente atualizar a lista."
+        elif missing:
+            message = "O microfone escolhido está indisponível. Reconecte-o ou selecione outro."
+        elif not sources:
+            message = "Nenhum microfone encontrado. Conecte um dispositivo e atualize a lista."
+        else:
+            message = "Estas opções não alteram uma gravação em andamento."
+        self.mic_status.set_text(message)
+        return False
 
     def _preference_page(self, title, description):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
@@ -520,6 +628,8 @@ class SettingsWindow(Gtk.Window):
         device = combo.get_active_id()
         if device:
             set_mic_device(device)
+            combo.set_tooltip_text(combo.get_active_text())
+            self._update_mic_status()
 
     def _on_system_audio_toggled(self, switch, _pspec):
         set_system_audio_enabled(switch.get_active())

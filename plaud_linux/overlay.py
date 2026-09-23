@@ -479,7 +479,13 @@ class Overlay(Gtk.Window):
         # for the movable pill, or anchor/margins for the layer-shell fallback.
 
         # start recording immediately (like Plaud: it just starts capturing)
-        self.rec.start()
+        try:
+            self.rec.start()
+        except audio.MissingSystemMonitor:
+            # No ffmpeg was spawned. The partly built Gtk.Window must not
+            # outlive the refused session, even though run() never returns it.
+            self.destroy()
+            raise
         self.started = datetime.now()
 
         self._tick_id = GLib.timeout_add(500, self._tick)
@@ -865,10 +871,12 @@ class Overlay(Gtk.Window):
         self._syncing_src = True
         try:
             if not self.rec.set_sources(system, mic):
-                # Refused -- only "neither" can do that, and _sync_src_ui keeps
-                # it unreachable. Put the button back rather than leaving it
-                # showing a state the engine is not in.
+                # Put the button back when both sources would be off or a
+                # requested system monitor is unavailable. In the latter case
+                # the existing mic segment keeps recording unchanged.
                 btn.set_active(not btn.get_active())
+                if system:
+                    self._notify("Plaud", "Áudio do sistema indisponível — confira a saída de som.")
                 return
             self._sync_src_ui()
         finally:
@@ -1273,7 +1281,34 @@ class Overlay(Gtk.Window):
         if self._stopping:
             return False
         self._stopping = True
-        path = self.rec.stop()
+        try:
+            self.rec.stop()
+        except Exception:
+            # A failed stop does not say whether either ffmpeg has exited.
+            # The mark tap is raw PCM; the primary child owns an Opus file.
+            # Hide neither while either may still be capturing. Unknown poll
+            # state is treated as live and the visible Stop button can retry.
+            def may_capture(proc):
+                if proc is None:
+                    return False
+                try:
+                    return proc.poll() is None
+                except Exception:
+                    return True
+
+            tap = getattr(self.rec, "mark_buffer", None)
+            if may_capture(getattr(self.rec, "proc", None)) or may_capture(
+                    getattr(tap, "proc", None)):
+                self._stopping = False
+                self.btn_stop.set_sensitive(True)
+                self.wave.set_active(True)
+                self._notify("Plaud", "Não foi possível parar a captura. Tente Parar novamente.")
+                return False
+            # Both children are known to be out. A merge/metadata failure
+            # still owns local audio but does not own a verified upload file.
+            self.rec.finalize_failed = True
+            self.rec.state = "stopped"
+            self._notify("Plaud", "Falha ao finalizar a gravação. Áudio mantido neste computador.")
         self.destroy()
         # Past this line rec.screenshots belongs to the upload thread; anything
         # attached later is never sent. destroy() above is what gives a pending
