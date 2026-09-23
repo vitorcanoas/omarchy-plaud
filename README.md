@@ -12,6 +12,30 @@ Omarchy application.
 - [Security and private reporting](SECURITY.md)
 - [Third-party material and redistribution limits](THIRD_PARTY_NOTICES.md)
 
+## Independent community project
+
+This project exists to help Plaud users on Arch Linux and Omarchy with their
+own desktop workflow. It is not intended to copy or compete with Plaud's
+commercial products, replace its service, or imply an official partnership.
+Plaud names and marks belong to their respective owners. This application is
+not affiliated with, endorsed by, or approved by Plaud or Omarchy.
+
+**Prefer the official Plaud application whenever it supports your system.**
+Follow Plaud's official updates and recommendations. If Plaud releases an
+official application compatible with Arch Linux / Omarchy, we recommend
+installing that application instead of this community client. Compatibility
+with future Plaud service changes is not guaranteed.
+
+If this project is approved for listing in the Omarchy community marketplace,
+the maintainer intends to contact Plaud, present the work and offer to
+collaborate. Neither marketplace approval nor that contact has happened yet;
+marketplace listing would not constitute Plaud approval or endorsement.
+
+This statement of intent does not grant permission to redistribute
+Plaud-derived artwork. The unresolved rights described in
+[third-party notices](THIRD_PARTY_NOTICES.md) remain a public-distribution
+prerequisite.
+
 ## Install
 
 Install the Arch packages in the [installation guide](docs/INSTALL.md), then
