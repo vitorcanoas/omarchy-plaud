@@ -1,6 +1,6 @@
 # Tests
 
-The private review runner expects **459 checks across 42 files**. It verifies
+The private review runner expects **477 checks across 44 files**. It verifies
 GTK behavior, capture and stop lifecycles, desktop integration, local storage,
 service payload construction and generation flow. `tests/run.py` is the source
 of truth for the included files and per-file counts.
@@ -49,3 +49,5 @@ When adding a check, set `PLAUD_LINUX_HOME` to a fresh temporary directory
 before importing application modules, block network transport, and preserve
 the separate D-Bus session. Update the expected per-file count in
 `tests/run.py` when adding or removing checks.
+
+Additional focused checks: `test_failure_boundaries.py` covers stop/source/error handling; `test_settings_usability.py` covers close/Escape, source-state preservation, background discovery, timeout and explicit retry. These are synthetic checks, not real account verification.

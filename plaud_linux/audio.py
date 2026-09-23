@@ -27,6 +27,10 @@ REC_DIR = paths.RECORDINGS
 LOG_DIR = paths.LOGS
 
 
+class MissingSystemMonitor(RuntimeError):
+    """The requested system output has no capture monitor yet."""
+
+
 def write_json(path, obj):
     """Write `obj` as JSON so a reader never sees a half-written file.
 
@@ -345,13 +349,23 @@ class MarkBuffer:
         -- the tap writes raw PCM to a pipe -- so nothing is lost by killing it,
         and it must never be able to delay stop() of the real recording.
         """
-        proc, self.proc = self.proc, None
+        proc = self.proc
         if proc is not None:
             try:
                 proc.kill()
                 proc.wait(timeout=2)
             except Exception:
                 pass
+            # Do not forget a tap that may still be reading microphone/system
+            # audio. Unlike the main Opus capture this is raw PCM, so killing
+            # it needs no container finalization, but exit still needs proof.
+            try:
+                if proc.poll() is None:
+                    return False
+            except Exception:
+                return False
+            self.proc = None
+        return True
 
     def dump_ogg(self, path):
         """Transcode the ring to Ogg/Opus at the path. None if there is nothing.
@@ -436,7 +450,7 @@ class Recorder:
         gives that up. Everything the pick depends on must therefore be right at
         `start()`, which is why a failed probe below is not cached.
         """
-        if self._src is None:
+        if self._src is None or (self.mode != "mic" and not self._src[0]):
             mon, sink, why = pick_system_monitor()
             mic_src = getattr(self, "mic_device", None) or default_source()
             # An empty probe is a failure, not an answer. Freezing it would pin
@@ -458,6 +472,10 @@ class Recorder:
         fine and is wrong.
         """
         mon, sink, mic_src, why = self._resolve_src()
+        if self.mode != "mic" and not mon:
+            # `-i default` is Pulse's default *source*, often the microphone.
+            # Never substitute it for a requested system-output monitor.
+            raise MissingSystemMonitor("system output monitor unavailable")
         if self.mode == "mic":
             args = ["-f", "pulse", "-i", mic_src or "default"]
         elif self.mic and mon and mic_src:
@@ -578,6 +596,15 @@ class Recorder:
         want_mic = bool(mic)
         if mode == self.mode and want_mic == self.mic:
             return True
+        if mode != "mic" and not (self._src and self._src[0]):
+            # Validate before pausing the current microphone segment. A
+            # rejected toggle must leave that capture running, and a later
+            # explicit attempt may re-probe after the sink returns.
+            mon, sink, why = pick_system_monitor()
+            if not mon:
+                return False
+            mic_src = getattr(self, "mic_device", None) or default_source()
+            self._src = (mon, sink, mic_src, why)
         # Paused or idle: record the choice and let the next start() apply it.
         # Cutting a segment here would append an empty one to a paused session.
         if self.state != "recording":
@@ -606,6 +633,18 @@ class Recorder:
         A fresh MarkBuffer per segment, so resume() starts with an empty ring --
         the audio captured during the pause is exactly what must not be in it.
         """
+        tap = self.mark_buffer
+        if tap is not None:
+            proc = getattr(tap, "proc", None)
+            if proc is not None:
+                try:
+                    if proc.poll() is None:
+                        return
+                except Exception:
+                    return
+            # The old tap is confirmed out (or never spawned). Only then may
+            # resume replace its handle with a new segment's ring.
+            self.mark_buffer = None
         try:
             args, _mon, _sink, _mic, _why = self._input_args()
             self.mark_buffer = MarkBuffer(args, LOG_DIR / f"{self.session}.log")
@@ -616,12 +655,24 @@ class Recorder:
             self.mark_buffer = None
 
     def _stop_mark_buffer(self):
+        tap = self.mark_buffer
+        if tap is None:
+            return True
         try:
-            if self.mark_buffer is not None:
-                self.mark_buffer.stop()
+            tap.stop()
         except Exception:
             pass
+        # A failed kill/wait must not lose the only handle to a tap that can
+        # still capture. A later explicit Stop retries it.
+        proc = getattr(tap, "proc", None)
+        if proc is not None:
+            try:
+                if proc.poll() is None:
+                    return False
+            except Exception:
+                return False
         self.mark_buffer = None
+        return True
 
     def elapsed(self):
         """Segundos de áudio gravado — congela na pausa, para bater com o arquivo."""
@@ -653,16 +704,39 @@ class Recorder:
 
     def stop(self):
         if self.proc:
-            self.proc.send_signal(signal.SIGINT)
+            proc = self.proc
             try:
-                self.proc.wait(timeout=8)
+                proc.send_signal(signal.SIGINT)
+            except Exception:
+                # The child may have exited between the stop click and SIGINT.
+                # If its state is uncertain, retain the handle for a retry.
+                try:
+                    if proc.poll() is None:
+                        raise
+                except OSError:
+                    raise
+            try:
+                proc.wait(timeout=8)
             except subprocess.TimeoutExpired:
-                self.proc.kill()
+                # SIGKILL discards an unfinished Opus container. Keep the
+                # indicator and allow another graceful attempt instead.
+                try:
+                    if proc.poll() is None:
+                        raise
+                except OSError:
+                    raise
             self.proc = None
-        self._stop_mark_buffer()
+        if self._stop_mark_buffer() is False:
+            raise RuntimeError("mark tap is still capturing")
         self.state = "stopped"
-        self._concat()
-        self._save_meta()
+        try:
+            self._concat()
+            self._save_meta()
+        except Exception:
+            # Process exit is known, but a failed merge/sidecar means the
+            # output cannot be offered to the upload worker as verified.
+            self.finalize_failed = True
+            raise
         return self.final_path
 
     def discard(self):
