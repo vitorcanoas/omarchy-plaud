@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "plaud-linux"
+version = "0.1.0"
+description = "Native Linux recorder that uploads to Plaud (transcription + AI notes), recreating the Plaud Desktop experience on Omarchy/Arch (Hyprland/Wayland)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "requests>=2.25",
+    "cryptography>=3.4",
+    "Pillow>=9",
+]
+
+[project.scripts]
+plaud-linux = "plaud_linux.main:main"
+
+[tool.setuptools]
+packages = ["plaud_linux"]
+
+# System dependencies and the supported checkout installer are documented in README.md.
+
+[tool.setuptools.package-data]
+plaud_linux = ["web/*"]

@@ -1,0 +1,10 @@
+# Python deps (most ship with the system python on Zorin/Ubuntu; requests + cryptography
+# are the two that matter). GTK is provided by system packages (python3-gi), not pip.
+# So is gtk-layer-shell, which the Wayland overlay needs -- there is no pip package for
+# its typelib, so it cannot be pinned here. See README.md for the package names.
+requests>=2.25
+cryptography>=3.4
+# Pillow decodes the bundled tray PNGs into the ARGB32 bytes the
+# StatusNotifierItem IconPixmap property wants. Imported lazily inside
+# tray.py, so a machine without it loses the tray icon and nothing else.
+Pillow>=9.0

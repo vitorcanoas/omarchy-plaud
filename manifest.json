@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "community.plaud-linux",
+  "name": "Plaud Linux",
+  "version": "0.1.0",
+  "author": "Plaud Linux contributors",
+  "description": "Open the independent Plaud Linux desktop card without starting recording",
+  "kinds": ["bar-widget"],
+  "entryPoints": {"barWidget": "omarchy/BarWidget.qml"},
+  "barWidget": {
+    "displayName": "Plaud Linux",
+    "category": "Apps",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

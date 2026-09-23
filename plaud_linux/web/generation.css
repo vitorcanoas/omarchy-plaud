@@ -1,0 +1,43 @@
+/* Keep the official DOM, event handlers and teleported controls; hide account UI. */
+html, body { background: white !important; }
+body * { visibility: hidden !important; }
+.generate-options-dialog, .generate-options-dialog *,
+.templates-selector-dialog, .templates-selector-dialog *,
+.auto-speaker-dialog, .auto-speaker-dialog *,
+.template-preview-dialog, .template-preview-dialog *,
+.edit-template-dialog, .edit-template-dialog *,
+.el-popper, .el-popper *, .el-message, .el-message *,
+.el-message-box__wrapper, .el-message-box__wrapper * { visibility: visible !important; }
+.generate-options-dialog .el-overlay,
+.templates-selector-dialog .el-overlay { background: white !important; }
+.generate-options-dialog .el-dialog {
+  /* The official rule uses position: fixed with bottom: 48px; keeping bottom
+     while relative shifted the dialog up 48px and cut the title. */
+  position: relative !important; inset: auto !important;
+  transform: none !important; margin: 16px auto !important;
+  width: min(464px, calc(100vw - 32px)) !important;
+  max-height: calc(100vh - 32px) !important; overflow-y: auto !important;
+}
+.templates-selector-dialog .el-dialog {
+  /* The official rule sizes this card from the viewport (width 1244px capped
+     at 100vw - 48px, height 100vh - 96px). Every one of those is overridden
+     so the card fills the fixed window (generation.js reports no size for
+     it); the card keeps its own inner scrolling. */
+  inset: auto !important; transform: none !important;
+  margin: 16px !important; width: calc(100vw - 32px) !important;
+  max-width: none !important; height: calc(100vh - 32px) !important;
+  max-height: none !important;
+}
+.language-selector-popover.el-popper {
+  /* The "Audio language" list is a popover placed right-end of the whole
+     row (measured 2026-09-08: placement right-end, inset auto auto 46px
+     476px, width 342px in a 496px viewport). Popper cannot flip it: neither
+     side of a row as wide as the card fits in a window as wide as the card,
+     so only a 20px strip was visible and the owner could not find
+     Portuguese. Pinning the horizontal position keeps the page's own
+     vertical placement and inner scrolling; the arrow would point at
+     nothing, so it is hidden. The AI-model popover flips to left-end by
+     itself and needs nothing. */
+  left: auto !important; right: 16px !important;
+}
+.language-selector-popover .el-popper__arrow { display: none !important; }

@@ -1,0 +1,21 @@
+name: Static checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Python and Bash syntax
+        run: |
+          python3 -m compileall -q plaud_linux tests
+          bash -n install.sh bin/plaud-linux
+          git diff --check
+      # Runtime acceptance requires Arch, GTK, PipeWire and an awake compositor.
+      # See docs/COMMUNITY.md; this job never accesses a Plaud account.

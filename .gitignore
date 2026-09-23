@@ -1,0 +1,29 @@
+# Generated Python and build files
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+# Local runtime data, credentials and scanner output
+recordings/
+logs/
+state/
+*.opus
+*.enc
+tokens.enc
+device.json
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+gitleaks-report.*
+security-scan-results/
+# Editor files
+.DS_Store
+*.swp
+.idea/
+.vscode/
