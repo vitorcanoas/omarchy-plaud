@@ -38,6 +38,11 @@ plaud-linux --status      # show local login status
 
 ## Record and annotate
 
+![Compact standby card with recent uploads collapsed](docs/images/standby.png)
+
+Opening the client shows its compact standby card. Recording starts only after
+an explicit action.
+
 ![Highlights panel with a synthetic note and two synthetic slide images](docs/images/highlights.png)
 
 *Highlights panel in a local demonstration. The note and slides are synthetic;
