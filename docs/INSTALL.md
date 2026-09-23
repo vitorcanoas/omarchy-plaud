@@ -10,8 +10,8 @@ Repository access is required. Authenticate with your own GitHub account; do
 not put access tokens in the clone URL.
 
 ```bash
-git clone https://github.com/vitorcanoas/omarchy-plaud-linux.git
-cd omarchy-plaud-linux
+git clone https://github.com/vitorcanoas/omarchy-plaud.git
+cd omarchy-plaud
 ```
 
 The installer accepts checkout paths made of letters, digits, `_`, `-`, `.`,
