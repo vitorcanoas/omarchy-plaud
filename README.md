@@ -4,8 +4,9 @@ Plaud Linux is an independent desktop client for Omarchy / Arch Linux on
 Hyprland and Wayland. It records system audio and microphone input, keeps
 timestamped notes and screenshots, and uploads to your Plaud account through
 the observed desktop flow. It does not require a separate developer API
-subscription. This is a **private review copy**, not an official Plaud or
-Omarchy application.
+subscription. This is an independent community project, not an official Plaud or Omarchy
+application. [Marketplace review request](https://github.com/omacom/omarchy-plugin-marketplace/issues/8345)
+is open; the project is not approved or listed.
 
 - [Install, update or remove](docs/INSTALL.md)
 - [Contribute and run checks](CONTRIBUTING.md)
@@ -132,7 +133,7 @@ With an awake graphical session:
 dbus-run-session -- python3 tests/run.py
 ```
 
-The private review test runner expects **477 checks across 44 files**. Tests
+The test runner expects **477 checks across 44 files**. Tests
 use isolated data and block network calls. They do not prove a real account
 upload, current service compatibility or physical pointer behavior. See
 [tests/README.md](tests/README.md) for the test conditions.
